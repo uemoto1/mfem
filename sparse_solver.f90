@@ -1,37 +1,53 @@
 module sparse_solver
   implicit none
-      
+
   type sparse_matrix_csr
     integer :: ndim, nz
     real(8), allocatable :: value(:)
     integer, allocatable :: icolm(:)
     integer, allocatable :: irptr(:)
   end type sparse_matrix_csr
-  
+
 contains
-  
-  subroutine sparse_matmul(a, x, y)
+
+  subroutine allocate_sparse(ndim, nz, a)
     implicit none
-    type(sparse_matrix_csr), intent(in) :: a
-    real(8), intent(in) :: x(:)
-    real(8), intent(out) :: y(:)
-    integer :: i, ij_min, ij_max, ij, j
-    real(8) :: temp
-    ! compute matrix-vector multification: y = a x
-    do i = 1, a%ndim
-      temp = 0.
-      ij_min = a%irptr(i)
-      ij_max = a%irptr(i+1) - 1
-      do ij = ij_min, ij_max
-        j = a%icolm(ij)
-        temp = temp + a%value(ij) * x(j)
-      end do
-      y(i) = temp
-    end do
+    type(sparse_matrix_csr), intent(inout) :: a
+    integer, intent(in) :: ndim
+    integer, intent(in) :: nz
+    a%ndim = ndim
+    a%nz = nz
+    allocate(a%value(a%nz))
+    allocate(a%irptr(a%ndim + 1))
+    allocate(a%icolm(a%nz))
     return
-  end subroutine sparse_matmul
-  
-  
+  end subroutine
+
+
+  subroutine deallocate_sparse(a)
+    implicit none
+    type(sparse_matrix_csr), intent(inout) :: a
+    if (allocated(a%value)) deallocate(a%value)
+    if (allocated(a%irptr)) deallocate(a%irptr)
+    if (allocated(a%icolm)) deallocate(a%icolm)
+    a%ndim = 0
+    a%nz = 0
+    return
+  end subroutine
+
+
+  subroutine empty_sparse_like(src, dst)
+    implicit none
+    type(sparse_matrix_csr), intent(in) :: src
+    type(sparse_matrix_csr), intent(inout) :: dst
+    call deallocate_sparse(dst)
+    call allocate_sparse(src%ndim, src%nz, dst)
+    dst%icolm(:) = src%icolm(:)
+    dst%irptr(:) = src%irptr(:)
+    return
+  end subroutine
+
+
   integer function getindex(a, i, j) result(ij_index)
     implicit none
     type(sparse_matrix_csr), intent(in) :: a
@@ -74,14 +90,14 @@ contains
     ij_index = 0 ! not nonzero element
     return
   end function getindex
-    
-    
-  real(8) function getitem(a, i, j) result(value)
+
+
+  real(8) function getvalue(a, i, j) result(value)
     implicit none
     type(sparse_matrix_csr), intent(in) :: a
     integer, intent(in) :: i, j
     integer :: ij_index
-    ! search 
+    ! search the index of (i,j)-element
     ij_index = getindex(a, i, j)
     if (0 < ij_index) then
       value = a%value(ij_index)
@@ -89,46 +105,31 @@ contains
       value = 0
     end if
     return
-  end function getitem
-  
-  
-  subroutine allocate_sparse(ndim, nz, a)
+  end function getvalue
+
+
+  subroutine sparse_matmul(a, x, y)
     implicit none
-    type(sparse_matrix_csr), intent(inout) :: a
-    integer, intent(in) :: ndim
-    integer, intent(in) :: nz
-    a%ndim = ndim
-    a%nz = nz
-    allocate(a%value(a%nz))
-    allocate(a%irptr(a%ndim + 1))
-    allocate(a%icolm(a%nz))
+    type(sparse_matrix_csr), intent(in) :: a
+    real(8), intent(in) :: x(:)
+    real(8), intent(out) :: y(:)
+    integer :: i, ij_min, ij_max, ij, j
+    real(8) :: temp
+    ! compute matrix-vector multification: y = a x
+    do i = 1, a%ndim
+      temp = 0.
+      ij_min = a%irptr(i)
+      ij_max = a%irptr(i+1) - 1
+      do ij = ij_min, ij_max
+        j = a%icolm(ij)
+        temp = temp + a%value(ij) * x(j)
+      end do
+      y(i) = temp
+    end do
     return
-  end subroutine
-  
-  
-  subroutine deallocate_sparse(a)
-    implicit none
-    type(sparse_matrix_csr), intent(inout) :: a
-    if (allocated(a%value)) deallocate(a%value)
-    if (allocated(a%irptr)) deallocate(a%irptr)
-    if (allocated(a%icolm)) deallocate(a%icolm)
-    a%ndim = 0
-    a%nz = 0
-    return
-  end subroutine
-  
-  
-  subroutine empty_sparse_like(src, dst)
-    implicit none
-    type(sparse_matrix_csr), intent(in) :: src
-    type(sparse_matrix_csr), intent(inout) :: dst
-    call allocate_sparse(src%ndim, src%nz, dst)
-    dst%icolm(:) = src%icolm(:)
-    dst%irptr(:) = src%irptr(:)
-    return
-  end subroutine
-  
-  
+  end subroutine sparse_matmul
+
+
   subroutine imcomplete_lu0(a, lu)
     implicit none
     type(sparse_matrix_csr), intent(in) :: a
@@ -140,14 +141,13 @@ contains
       ij_max = lu%irptr(i+1)-1
       do ij = ij_min, ij_max
         j = lu%icolm(ij)
-        temp = getitem(a, i, j)
+        temp = getvalue(a, i, j)
         k_max = min(i, j) - 1
         do ik = ij_min, ij_max
           k = a%icolm(ik)
           if (k_max < k) exit
-          temp = temp - lu%value(ik) * getitem(lu, k, j)
+          temp = temp - lu%value(ik) * getvalue(lu, k, j)
         end do
-        
         if (j <= i) then
           lu%value(ij) = temp
           if (j == i) l_ii = temp
@@ -158,15 +158,14 @@ contains
     end do
     return
   end subroutine imcomplete_lu0
-  
-  
+
+
   subroutine solve_precondion(lu, x)
     implicit none
     type(sparse_matrix_csr), intent(in) :: lu
     real(8), intent(inout) :: x(:)
     integer :: i, j, ij, ij_min, ij_max
     real(8) :: temp, l_ii
-    
     ! Back substitution
     do i = lu%ndim, 1, -1
       temp = x(i)
@@ -182,7 +181,6 @@ contains
       end do
       x(i) = temp
     end do
-    
     ! Forward substitution
     do i = 1, lu%ndim
       temp = x(i)
@@ -202,8 +200,8 @@ contains
     end do
     return
   end subroutine solve_precondion
-    
-  
+
+
   integer function gmres_csr(a, b, x, nrst, maxiter, tol, lu)
     implicit none
     type(sparse_matrix_csr), intent(in) :: a
@@ -218,7 +216,7 @@ contains
     real(8) :: c(nrst), s(nrst), y(nrst)
     real(8) :: beta, rtemp, d
     logical :: flag
-    
+
     do m = 1, maxiter
        call sparse_matmul(a, x(:), v(:))
        v(:) = b(:) - v(:)
@@ -236,7 +234,6 @@ contains
           end do
           h(n+1, n) = sqrt(dot_product(v(:), v(:)))
           q(:, n + 1) = v(:) / h(n + 1, n)
-          
           ! givens rotation
           r(1, n) = h(1, n)
           do j = 2, n
@@ -251,7 +248,6 @@ contains
           e(n+1) = - s(n) * e(n)
           e(n) = c(n) * e(n)
        end do
-       
        ! back substitution
        do j = nrst, 1, -1
           y(j) = e(j)
@@ -260,12 +256,11 @@ contains
           end do
           y(j) = y(j) / r(j, j)
        end do
-       
        ! update x
        do i = 1, nrst
           x(:) = x(:) + y(i) * q(:, i)
        end do
-       
+       !
        if (abs(e(nrst+1)) < tol) then
          gmres_csr = 0
          return
@@ -275,7 +270,7 @@ contains
     return
   end function gmres_csr
 end module sparse_solver
-      
+
 program test
   use sparse_solver
 implicit none
@@ -287,10 +282,10 @@ implicit none
   type(sparse_matrix_csr) :: a, lu
   real(8) :: b(ndim), x(ndim)
   integer :: i, j, n
-  
+
   b = 0.
   x = 0.
-  
+
   dx = pi / ndim
   n = 1
   a%ndim = ndim
@@ -329,19 +324,11 @@ implicit none
   a%irptr(ndim+1) = n
   call empty_sparse_like(a, lu)
   call imcomplete_lu0(a, lu)
-  
-
-
   i = gmres_csr(a, b, x, 50, 1000, 1d-20, lu=lu)
-  
+
   do i = 1, ndim
     write(*,*)  x(i)
   enddo
-  
-  stop 
+
+  stop
 end program test
-  
-  
-        
-        
-      
