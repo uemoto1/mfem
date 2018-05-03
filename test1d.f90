@@ -272,3 +272,64 @@ contains
   end function gmres_csr
 end module sparse_solver
 
+program test
+  use sparse_solver
+implicit none
+  integer, parameter :: ndim = 1000
+  integer, parameter :: nz = 3 * ndim
+  real(8), parameter :: pi = 3.14159265
+  real(8) :: dx
+
+  type(sparse_matrix_csr) :: a, lu
+  real(8) :: b(ndim), x(ndim)
+  integer :: i, j, n
+
+  b = 0.
+  x = 0.
+
+  dx = pi / ndim
+  n = 1
+  a%ndim = ndim
+  a%nz = nz
+  allocate(a%value(nz), a%icolm(nz), a%irptr(ndim+1))
+  do i = 1, ndim
+    a%irptr(i) = n
+    if (i == 1) then
+      b(i) = 1.
+      a%value(n) = 1.
+      a%value(n+1) = 0.
+      a%value(n+2) = 0.
+      a%icolm(n) = i
+      a%icolm(n+1) = i+1
+      a%icolm(n+2) = i+2
+    endif
+    if ((1 < i) .and. (i < ndim)) then
+      a%value(n) = 1.00 / dx ** 2
+      a%value(n+1) = 1.00 - 2.00 / (dx ** 2)
+      a%value(n+2) = 1.00 / dx ** 2
+      a%icolm(n) = i-1
+      a%icolm(n+1) = i
+      a%icolm(n+2) = i+1
+    endif
+    if  (i == ndim) then
+      b(i) = -1.
+      a%value(n) = 0.
+      a%value(n+1) = 0.
+      a%value(n+2) = 1.
+      a%icolm(n) = i-2
+      a%icolm(n+1) = i-1
+      a%icolm(n+2) = i
+    endif
+    n = n + 3
+  enddo
+  a%irptr(ndim+1) = n
+  call empty_sparse_like(a, lu)
+  call prepare_ilu0(a, lu)
+  i = gmres_csr(a, b, x, 50, 1000, 1d-20, lu=lu)
+
+  do i = 1, ndim
+    write(*,*)  x(i)
+  enddo
+
+  stop
+end program test
